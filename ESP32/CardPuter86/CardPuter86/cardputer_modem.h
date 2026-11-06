@@ -38,6 +38,14 @@ void cardputer_modem_resume_wifi(void);
 bool cardputer_modem_port(uint16_t port);
 void cardputer_modem_write(uint16_t port, uint8_t value);
 uint8_t cardputer_modem_read(uint16_t port);
+#ifdef use_lib_log_serial
+// 仅调试固件：强制起射频（不配 SSID 也能 AT+WIFISCAN），用于远程验收
+bool cardputer_modem_debug_start_radio(void);
+// 串口侧验收通道（0x01 'G' / 0x01 'H'）：不经过 guest 键盘就能看网络状态、
+// 跑一次完整的 HTTP GET。guest 侧 WTERM 路径依赖串口->PS/2 注入，是另一回事。
+void cardputer_modem_debug_net_report(void);
+void cardputer_modem_debug_http_get(const char *host, const char *path);
+#endif
 #endif
 
 #endif

@@ -109,6 +109,24 @@ Windows 上是同一个流程，串口换成 `--port COM4`。第一次开机约 
   拔插 USB 不会给卡断电。
 - SD 走 SPI2（SPI3 被显示栈占用）；引脚见 `ESP32/CardPuter86/CardPuter86/hardware.h`。
 
+## WiFi 与内存（二选一的实话）
+
+2026-11 起 lean 构建**默认就带 WiFi**（Hayes modem 打到 COM1），开机自动关联
+NVS 里存的 AP。但 ESP32-S3 只有 ~320 KB 内部 SRAM，`exec86` 的页缓存、320×200
+显示帧缓冲（62.5 KB）、内部盘 FatFS、WiFi/lwIP 四方抢的是同一块。实测（dbglean 的
+`[mem]` 打点）：
+
+| 状态 | guest 常驻页 | 说明 |
+|---|---|---|
+| WiFi 关（菜单里 Network COM1 = Disabled） | 12–20 页 | DOS 最快，`c:` ≈ 2–3.5 ms/批 |
+| WiFi 开（已关联） | 6–8 页 | 换页变多，射频还会插进 `exec86` 空档 |
+
+**128 KB 档**（Guest RAM 菜单）刻意保留了 128 KB 机器，但凑不满 32 页（131,072 B）
+就退化成「128 KB + 换页」，而不是悄悄变成 256 KB —— 屏幕会写
+`128 KB RAM (paging, SRAM short)`。128 KB 跑 DOS 2.11 有意义，跑 DOS 5.0 装不下。
+
+想两头都要，就按用途切换：玩 DOS 时把 WiFi 关掉，需要联网/拨号时再打开。
+
 ## 硬件与限制
 
 - **主板**：M5Stack Cardputer（ESP32-S3，8MB flash，ST7789 240×135）。

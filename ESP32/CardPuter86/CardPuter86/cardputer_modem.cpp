@@ -131,10 +131,21 @@ static void start_wifi(void) {
     if (!cardputer_settings_com1_enabled()) return;
     if (wifi_ssid[0] == '\0') return;
     WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
+    /* 省电（modem sleep）不是可选项，是共存条件：
+       实测 WiFi 用主动模式时，射频 + lwIP 一共要 ~103 KB，且关联那一刻要一次性
+       拿到 ~54 KB 连续块。而内部盘 FatFS 现在（正确地）先挂载，占了十几 KB 并让
+       最大连续块从 73.7 KB 掉到 45 KB → 关联直接 `AUTH_FAIL`（status=4），
+       同时射频任务把模拟器拖到 0.65 s/批（正常 ~3.5 ms）。DTOM 省电把 RX 缓冲
+       压下来，既省堆又几乎不占 CPU。 */
+    WiFi.setSleep(true);
     WiFi.begin(wifi_ssid, wifi_pass);
     wifi_started = true;
     last_wifi_attempt_ms = millis();
+#ifdef use_lib_log_serial
+    Serial.printf("[wifi] begin ssid='%s' heap=%lu max=%lu\n", wifi_ssid,
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
+#endif
 }
 
 static void hangup(void) {
@@ -215,6 +226,24 @@ static void wifi_scan(void) {
 }
 
 static void parse_wifi_command(const char *args) {
+    /* AT+WIFI=<ssid>,<pass> means "I want this machine on the network", so it also
+       switches COM1 on. That is not cosmetic: start_wifi() is gated on the COM1
+       setting, and the radio MUST come up during modem_init() — i.e. before
+       CreateRAM() grabs the guest page cache — otherwise esp_wifi_init() fails
+       with 257 (ESP_ERR_NO_MEM) because the heap is already fragmented into 4 KB
+       cache pages (measured: free=29704 max=9204 at the point of failure). */
+    const size_t arg_len = strlen(args);
+    const bool wifi_on = (arg_len == 3 && args[0] == '=' &&
+                          (args[1] == 'O' || args[1] == 'o') &&
+                          (args[2] == 'N' || args[2] == 'n'));
+    const bool wifi_off = (arg_len == 4 && args[0] == '=' &&
+                           (args[1] == 'O' || args[1] == 'o') &&
+                           (args[2] == 'F' || args[2] == 'f') &&
+                           (args[3] == 'F' || args[3] == 'f'));
+    if (arg_len > 1 && args[0] == '=' && !wifi_on && !wifi_off &&
+        !cardputer_settings_com1_enabled()) {
+        cardputer_settings_set_com1_enabled(true);
+    }
     if (!cardputer_settings_com1_enabled()) {
         result("NETWORK DISABLED");
         return;
@@ -492,6 +521,76 @@ static void data_byte(uint8_t value) {
         result("NO CARRIER");
     }
 }
+
+#ifdef use_lib_log_serial
+// 仅调试固件：即使还没配 SSID 也把射频拉起来（start_wifi() 的前两步），
+// 这样 guest 里跑 `AT+WIFISCAN` 就能扫到周围 AP —— 用来在不暴露家用 WiFi
+// 密码的前提下证明「驱动 + 射频 + SPI/flash 共存」是通的。
+bool cardputer_modem_debug_start_radio(void) {
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    Serial.printf("[wifi] radio forced on, heap=%lu max=%lu\n",
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
+    return true;
+}
+
+/* Debug console (0x01 'G'): one-line network report over USB serial.
+   Needed because the guest-side path (WTERM + AT commands) depends on the
+   serial->PS/2 keyboard injection being perfect, which is a separate problem. */
+void cardputer_modem_debug_net_report(void) {
+    Serial.printf("[net] status=%d connected=%d cfg=%d ssid='%s' ip=%s rssi=%d"
+                  " com1=%d heap=%lu max=%lu\n",
+                  (int)WiFi.status(),
+                  (int)(WiFi.status() == WL_CONNECTED),
+                  (int)(wifi_ssid[0] != '\0'),
+                  wifi_ssid,
+                  WiFi.status() == WL_CONNECTED
+                      ? WiFi.localIP().toString().c_str() : "-",
+                  WiFi.status() == WL_CONNECTED ? (int)WiFi.RSSI() : 0,
+                  (int)cardputer_settings_com1_enabled(),
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
+}
+
+/* Debug console (0x01 'H'): full end-to-end HTTP GET straight from the firmware,
+   printing the first bytes to USB serial. Proves DNS + TCP + HTTP without needing
+   a working guest keyboard. Blocking: up to MODEM_CONNECT_TIMEOUT_MS + a few s. */
+void cardputer_modem_debug_http_get(const char *host, const char *path) {
+    WiFiClient client;
+    if (WiFi.status() != WL_CONNECTED) {
+        if (!wifi_started) start_wifi();
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.printf("[http] no wifi (status=%d)\n", (int)WiFi.status());
+        return;
+    }
+    Serial.printf("[http] GET %s%s heap=%lu max=%lu\n", host, path,
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
+    if (!client.connect(host, 80, MODEM_CONNECT_TIMEOUT_MS)) {
+        Serial.printf("[http] connect failed\n");
+        return;
+    }
+    client.printf("GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                  path, host);
+    const uint32_t start = millis();
+    unsigned int got = 0;
+    while ((client.connected() || client.available()) &&
+           millis() - start < 8000 && got < 400) {
+        while (client.available() && got < 400) {
+            const int c = client.read();
+            if (c < 0) break;
+            Serial.write((uint8_t)((c == '\r' || c == '\n') ? ' ' : c));
+            got++;
+        }
+        delay(2);
+    }
+    client.stop();
+    Serial.printf("\n[http] bytes=%u in %lums\n", got,
+                  (unsigned long)(millis() - start));
+}
+#endif
 
 void cardputer_modem_init(void) {
     ier = lcr = mcr = scr = 0;

@@ -120,6 +120,25 @@ Per `git diff`: 25 files, +3147 / -318 lines, plus two new files
 - The SD card uses SPI2 (SPI3 belongs to the display stack); pins live in
   `ESP32/CardPuter86/CardPuter86/hardware.h`.
 
+## WiFi versus RAM (the honest trade-off)
+
+Since 2026-11 the lean build ships **with** WiFi (a Hayes modem on COM1) and joins the
+AP stored in NVS at boot. But the ESP32-S3 only has ~320 KB of internal SRAM, and the
+guest page cache, the 320x200 display framebuffer (62.5 KB), the internal-disk FatFS and
+WiFi/lwIP all compete for it. Measured with the dbglean `[mem]` probes:
+
+| State | resident guest pages | notes |
+|---|---|---|
+| WiFi off (menu: Network COM1 = Disabled) | 12-20 pages | fastest DOS, `c:` ~2-3.5 ms/batch |
+| WiFi on (associated) | 6-8 pages | more paging, and the radio steals `exec86` time |
+
+The **128 KB** option keeps a real 128 KB machine, but when 32 resident pages (131,072 B)
+do not fit it degrades to "128 KB + paging" instead of silently becoming 256 KB - the
+screen says `128 KB RAM (paging, SRAM short)`. 128 KB is useful for DOS 2.11; DOS 5.0
+does not fit in it.
+
+If you need both, switch by task: turn WiFi off for DOS work, on for dial-up/HTTP.
+
 ## Hardware and constraints
 
 - **Board**: M5Stack Cardputer (ESP32-S3, 8 MB flash, ST7789 240x135).

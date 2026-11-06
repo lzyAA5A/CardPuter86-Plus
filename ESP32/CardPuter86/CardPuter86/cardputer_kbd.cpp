@@ -220,7 +220,8 @@ boolean checkKey(uint8_t scancode) {
 
 static uint8_t serial_keys[64];
 static uint8_t serial_key_shift[64];   // 1 = this key needs L_SHIFT held with it
-static bool serial_shift_primed = false;
+static bool serial_shift_held = false; // guest currently believes L_SHIFT is down
+static uint8_t serial_idle_polls = 0;  // empty polls owed before the next key
 static uint8_t serial_key_count = 0;
 static uint8_t serial_key_head = 0;
 static bool serial_cmd_armed = false;
@@ -269,10 +270,46 @@ int cardputer_kbd_serial_take_command(void) {
     return cmd;
 }
 
+/* Raw-line mode: while active, incoming bytes are collected verbatim instead of
+   being translated into PS/2 scan codes. This exists because the scan-code path
+   has to squeeze make/break pairs for shift through a one-key-per-poll guest
+   handshake (see cardputer_kbd_serial_apply), which is fine for typing but a bad
+   way to hand the firmware a password. */
+#define SERIAL_LINE_MAX 96
+static char serial_line[SERIAL_LINE_MAX];
+static uint8_t serial_line_len = 0;
+static bool serial_line_mode = false;
+static bool serial_line_ready = false;
+
+void cardputer_kbd_serial_begin_line(void) {
+    serial_line_mode = true;
+    serial_line_len = 0;
+    serial_line_ready = false;
+}
+
+const char *cardputer_kbd_serial_take_line(void) {
+    if (!serial_line_ready) return NULL;
+    serial_line_ready = false;
+    return serial_line;
+}
+
 /* queue bytes that arrived on the serial port (called early in loop()) */
 void cardputer_kbd_serial_inject(void) {
     while (Serial.available() > 0) {
         int c = Serial.read();
+        if (serial_line_mode) {
+            if (c == '\r' || c == '\n') {
+                serial_line[serial_line_len] = '\0';
+                serial_line_ready = true;
+                serial_line_mode = false;
+            } else if ((c == 8 || c == 127) && serial_line_len > 0) {
+                serial_line_len--;
+            } else if (c >= 32 && c < 127 &&
+                       serial_line_len < (SERIAL_LINE_MAX - 1)) {
+                serial_line[serial_line_len++] = (char)c;
+            }
+            continue;
+        }
         // 0x01 arms debug command mode so a command byte never turns into a key.
         if (serial_cmd_armed) {
             serial_cmd_armed = false;
@@ -294,6 +331,10 @@ void cardputer_kbd_serial_inject(void) {
         if (serial_key_count < sizeof(serial_keys)) {
             serial_key_shift[serial_key_count] = need_shift ? 1 : 0;
             serial_keys[serial_key_count++] = sc;
+            Serial.printf("[rx] %02X -> %02X sh=%d\n", (unsigned char)c, sc,
+                          need_shift ? 1 : 0);
+        } else {
+            Serial.printf("[rx] %02X DROPPED (queue full)\n", (unsigned char)c);
         }
     }
 }
@@ -306,21 +347,46 @@ void cardputer_kbd_serial_apply(void) {
     if (serial_key_head >= serial_key_count) {
         serial_key_head = 0;
         serial_key_count = 0;
-        serial_shift_primed = false;
+        serial_idle_polls = 0;
+        // NOTE: serial_shift_held is deliberately NOT cleared here. Keys arrive
+        // one at a time, so this branch runs between every two characters — i.e.
+        // exactly while the guest may still be holding L_SHIFT from the previous
+        // (shifted) character. Clearing it here made the "release shift first"
+        // branch below unreachable, which is why "AT+WIFI=" kept arriving as
+        // "AT+WIFI+" and "JY2504" as "JY@504". Worst case it now costs two extra
+        // idle polls before the next unshifted key, which is free.
         return;
     }
     // handleinput() in CardPuter86.ino delivers exactly ONE changed key per poll
-    // (it returns right after the first difference), so pressing L_SHIFT and the
-    // key in the same poll would drop the key. Give the shift make a poll of its
-    // own first; the following poll then delivers the key while shift is held.
-    if (serial_key_shift[serial_key_head] && !serial_shift_primed) {
-        serial_shift_primed = true;
+    // (it returns right after the first difference), and it only advances that
+    // one key's shadow state. Two ordering rules therefore apply:
+    //   * L_SHIFT make must be delivered in a poll of its own *before* the key it
+    //     modifies (so the key make happens while the guest already sees shift);
+    //   * L_SHIFT break must be delivered *before* the next unshifted key's make.
+    // The old code only did the first half, so after any shifted character the
+    // guest still believed shift was down and the following unshifted key came out
+    // shifted ("AT+WIFI=" arrived as "AT+WIFI+", JY2504 as JY@504). Those keys are
+    // one poll apart at most, hence the explicit idle polls below.
+    if (serial_idle_polls > 0) {
+        serial_idle_polls--;
+        return;                        // keymap stays all-released: nothing to send
+    }
+    const bool need_shift = serial_key_shift[serial_key_head] != 0;
+    if (need_shift && !serial_shift_held) {
+        serial_shift_held = true;
         keymap[PS2_KC_L_SHIFT] = 0;
         return;
     }
+    if (!need_shift && serial_shift_held) {
+        // This poll leaves the keymap empty so handleinput() can push the pending
+        // key release; the +1 idle poll then carries the L_SHIFT break. Only after
+        // both are out does the next key get injected.
+        serial_shift_held = false;
+        serial_idle_polls = 1;
+        return;
+    }
     keymap[serial_keys[serial_key_head]] = 0;
-    if (serial_key_shift[serial_key_head]) keymap[PS2_KC_L_SHIFT] = 0;
-    serial_shift_primed = false;
+    if (need_shift) keymap[PS2_KC_L_SHIFT] = 0;
     serial_key_head++;
 }
 #endif

@@ -322,6 +322,10 @@ unsigned char TraduceTecla(unsigned char aux) {
 // ===============================================
 void CheckTeclaSDL(unsigned char codigo, unsigned char pulsado) {
     if (codigo == 0) return;
+#ifdef use_lib_log_serial
+    // Proof of what actually reached the emulated 8042 (physical keys included).
+    Serial.printf("[xt] %02X %s\n", codigo, pulsado ? "up" : "down");
+#endif
 
     if (pulsado == 0) {
         gb_portramTiny[fast_tiny_port_0x60] = codigo;
@@ -480,6 +484,23 @@ static int cardputer_esp_log_vprintf(const char *format, va_list arg) {
 }
 #endif
 
+/* 内存预算仪表（仅调试固件）。WiFi / 内部盘 FatFS / guest 页缓存三者抢的是同一
+   块 ~320 KB 内部 SRAM，出了问题只能靠逐点数字判断谁把连续块吃掉了，所以 setup
+   每跨过一步就打一行。free = 总空闲，max = 最大连续块（FatFS 与 WiFi 都只认后者）。 */
+#ifdef use_lib_log_serial
+static void mem_log(const char *label) {
+    Serial.printf("[mem] %-20s free=%lu max=%lu\n", label,
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMaxAllocHeap());
+}
+#else
+#define mem_log(label) do { } while (0)
+#endif
+
+/* guest 页缓存是否已建好。存储/启动盘选择提前到 CreateRAM 之前以后，
+   boot 菜单里的 set_boot_image(apply_now) 可能在模拟器还没内存时就要求重启 guest。 */
+bool cardputer_emulator_ready = false;
+
 void setup() {
     // 主频基线：先按最快的 240 MHz 起步。省电档（80 MHz）必须等 NVS 与显示
     // 都就绪之后才能读出来，见 cardputer_settings_init() 之后的 apply 调用 ——
@@ -522,6 +543,7 @@ void setup() {
     // 反过来（页缓存先拿 114KB）时，WiFi 一上来就把最大连续块压到 10,228B，
     // `[flash] mount rc=0x101 (ESP_ERR_NO_MEM)` → images=0 → 没有启动盘。
     cardputer_settings_init();
+    mem_log("after settings");
     // 蓝牙键盘模式（见 cardputer_btkbd.cpp）：
     //   - BLE 一次要吃约 40KB 连续堆，必须在任何模拟器/内部盘初始化之前起来，
     //     否则 `[flash] mount rc=0x101 (ESP_ERR_NO_MEM)` → images=0（实测踩过）。
@@ -565,13 +587,22 @@ void setup() {
         }
         (void)bt_handled;
     }
+    /* 内部盘（flash 里的 FAT 镜像分区）必须**先于 WiFi**挂载。
+       实测（N24）：WiFi 一旦 start + 关联，连同 lwIP/驱动缓冲共吃掉约 100 KB，
+       之后 `esp_vfs_fat_*` 再也拿不到 ~16 KB 连续块 →
+       `[flash] mount rc=0x101 (ESP_ERR_NO_MEM)` → images=0 → guest 没有启动盘、
+       直接掉进 ROM BASIC。反过来（盘先挂、WiFi 后起）盘是稳的，WiFi 也仍能起来。
+       盘是系统盘，优先级高于网络。 */
+    cardputer_storage_init_and_select();
+    mem_log("after storage");
+
     cardputer_modem_init();
 #ifdef use_lib_log_serial
     Serial.printf("Modem init done, free heap: %lu max: %lu\n",
                   (unsigned long)ESP.getFreeHeap(),
                   (unsigned long)ESP.getMaxAllocHeap());
 #endif
-    // 省电档：NVS 已就绪，现在读 "mcu80" 并切 240/80 MHz（在模拟器开跑之前；
+    mem_log("after modem");    // 省电档：NVS 已就绪，现在读 "mcu80" 并切 240/80 MHz（在模拟器开跑之前；
     // 显示/SPI 已按 240 MHz 初始化完毕，S3 的 APB 固定 80 MHz 不受影响）。
     cardputer_settings_apply_mcu_clock();
 
@@ -591,20 +622,33 @@ void setup() {
 #endif
         while (true) delay(1000);
     }
+    cardputer_emulator_ready = true;
+    mem_log("after CreateRAM");
     {
-        char ram_text[40];
-        snprintf(ram_text, sizeof(ram_text), "%lu KB guest RAM ready",
-                 (unsigned long)guest_memory_ram_kb());
+        char ram_text[56];
+        if (guest_memory_ram_fell_back()) {
+            // 用户选了 128 KB，但开机这一刻凑不齐 32 页常驻（显示帧缓冲 + 内部盘
+            // + WiFi 把 SRAM 占满了）。档位仍然生效（guest 就是 128 KB 机器），
+            // 只是缺页会走 flash swap —— 明确说出来，别让人以为设置没保存。
+            snprintf(ram_text, sizeof(ram_text),
+                     "%lu KB RAM (paging, SRAM short)",
+                     (unsigned long)guest_memory_ram_kb());
+        } else {
+            snprintf(ram_text, sizeof(ram_text), "%lu KB guest RAM ready",
+                     (unsigned long)guest_memory_ram_kb());
+        }
         tft_log(ram_text);
     }
 
     cardputer_cpu_init();
     cardputer_rtc_init();
     cardputer_power_init();
+    mem_log("after cpu init");
 
-    // Probe storage, show Settings when Ctrl is pressed, then select the IMG.
-    // Settings may change the effective guest RAM size for this boot.
-    cardputer_storage_init_and_select();
+    /* 存储/启动盘选择已经在 modem_init 之前做完了（见上面的长注释）：
+       内部盘的 FatFS 必须趁堆还完整时挂上，否则 WiFi 一起来它就拿不到连续块。
+       菜单改「Guest RAM / Boot system」仍然可用，set_boot_image(apply_now) 会在
+       这时直接换盘（此时 CreateRAM 已完成，guest RAM 可用）。 */
 
     ClearRAM();
     SetRAMTruco();
@@ -683,6 +727,9 @@ unsigned int tiene_que_tardar = 0;
 // 再 reset86() 让 BIOS 重新 POST 并从 A:/C: 引导。
 // 注意：必须放在 #ifdef use_lib_log_serial 之外 —— lean 固件里设置菜单也会调它。
 void cardputer_guest_restart(void) {
+    // 存储/启动盘选择现在发生在 CreateRAM 之前，那次 boot 菜单若带 apply_now 会
+    // 走到这里 —— 此时 guest 页缓存还没建，重启没有意义（后面 setup 自己会 reset86）。
+    if (!cardputer_emulator_ready) return;
     ClearRAM();
     SetRAMTruco();
     bootstrapPoll();
@@ -702,8 +749,83 @@ void cardputer_guest_restart(void) {
      d  dump the SD MBR partition table
      z  wipe the first 8 SD sectors, then dump
      k  dump guest CS:IP/SS:SP, INT histogram, 768-instruction ring, INT trail */
+/* Raw line from the debug console (armed with 0x01 'Q'). Currently the only
+   payload is "<ssid>,<password>": it enables Network COM1 and stores the
+   credentials in NVS. A reboot is still required — the radio has to come up in
+   modem_init(), i.e. before CreateRAM() allocates the guest page cache. */
+static void cardputer_debug_line(const char *line) {
+    const char *comma = strchr(line, ',');
+    if (!comma) {
+        Serial.printf("[dbg] need <ssid>,<pass> (got %u chars)\n",
+                      (unsigned)strlen(line));
+        return;
+    }
+    const size_t ssid_len = (size_t)(comma - line);
+    char ssid[33];
+    char pass[65];
+    if (ssid_len == 0 || ssid_len >= sizeof(ssid) ||
+        strlen(comma + 1) >= sizeof(pass)) {
+        Serial.printf("[dbg] bad ssid/pass length\n");
+        return;
+    }
+    memcpy(ssid, line, ssid_len);
+    ssid[ssid_len] = '\0';
+    strlcpy(pass, comma + 1, sizeof(pass));
+    cardputer_settings_set_com1_enabled(true);
+    const bool ok = cardputer_modem_save_wifi(ssid, pass);
+    Serial.printf("[dbg] wifi saved=%d ssid='%s' passlen=%u com1=%d\n",
+                  (int)ok, ssid, (unsigned)strlen(pass),
+                  (int)cardputer_settings_com1_enabled());
+    Serial.printf("[dbg] reboot the device so the radio starts before the page cache\n");
+}
+
 static void cardputer_debug_command(int cmd) {
     switch (cmd) {
+        case 'Q':
+            // 原文行模式：接下来收到的字节不再翻成 PS/2 扫描码，而是原样收进
+            // 一行（到 CR 结束），交给 cardputer_debug_line() 解析。用它写 WiFi
+            // 凭据，避免密码里的 shift 字符被注入路径弄丢。
+            cardputer_kbd_serial_begin_line();
+            Serial.printf("[dbg] line mode: send <ssid>,<pass> then CR\n");
+            break;
+        case 'G':
+            cardputer_modem_debug_net_report();
+            break;
+        case 'R':
+            // Reboot the whole MCU from the firmware itself. Lets a single serial
+            // session provision WiFi and then reboot into it, instead of handing
+            // the port back to esptool (every extra port open risks wedging COM4).
+            Serial.printf("[dbg] restarting MCU now\n");
+            Serial.flush();
+            delay(120);
+            ESP.restart();
+            break;
+        case 'H':
+            cardputer_modem_debug_http_get("example.com", "/");
+            break;
+        case 'W':
+            // 远程验收 WiFi：不进菜单就能开/关 Network COM1（WiFi 只在 COM1
+            // 使能且 SSID 非空时才 start_wifi）。开后强制起射频，方便在 guest
+            // 里跑 WTERM + AT+WIFISCAN 验证。
+            {
+                const bool enable = !cardputer_settings_com1_enabled();
+                if (!cardputer_settings_set_com1_enabled(enable)) {
+                    Serial.printf("[dbg] COM1 toggle failed (NVS)\n");
+                } else {
+                    Serial.printf("[dbg] COM1 -> %s heap=%lu max=%lu\n",
+                                  enable ? "Enabled" : "Disabled",
+                                  (unsigned long)ESP.getFreeHeap(),
+                                  (unsigned long)ESP.getMaxAllocHeap());
+                    if (enable) {
+                        cardputer_modem_debug_start_radio();
+                        cardputer_modem_resume_wifi();
+                        Serial.printf("[dbg] wifi configured=%d connected=%d\n",
+                                      (int)cardputer_modem_wifi_configured(),
+                                      (int)cardputer_modem_wifi_connected());
+                    }
+                }
+            }
+            break;
         case 'r':
             Serial.printf("[dbg] guest reboot, bootdrive=%u\n", (unsigned)bootdrive);
             cardputer_guest_restart();
@@ -753,11 +875,17 @@ static void cardputer_debug_command(int cmd) {
                 const uint32_t now_kb = guest_memory_ram_kb();
                 const uint32_t next_kb = now_kb == 128 ? 256 : (now_kb == 256 ? 512 : 128);
                 if (!guest_memory_set_ram_kb(next_kb)) {
-                    Serial.printf("[dbg] guest RAM %lu KB -> swap unavailable\n",
-                                  (unsigned long)next_kb);
+                    Serial.printf("[dbg] guest RAM %lu KB FAILED (heap=%lu max=%lu)"
+                                  " - see guestmem diag\n",
+                                  (unsigned long)next_kb,
+                                  (unsigned long)ESP.getFreeHeap(),
+                                  (unsigned long)ESP.getMaxAllocHeap());
                 } else {
-                    Serial.printf("[dbg] guest RAM -> %lu KB (send 'r' to reboot guest)\n",
-                                  (unsigned long)guest_memory_ram_kb());
+                    Serial.printf("[dbg] guest RAM -> %lu KB pages=%u paging=%d"
+                                  " (send 'r' to reboot guest)\n",
+                                  (unsigned long)guest_memory_ram_kb(),
+                                  (unsigned)guest_memory_cache_pages(),
+                                  (int)guest_memory_512k_enabled());
                 }
             }
             break;
@@ -903,6 +1031,8 @@ void loop() {
     {
         const int dbg_cmd = cardputer_kbd_serial_take_command();
         if (dbg_cmd) cardputer_debug_command(dbg_cmd);
+        const char *dbg_line = cardputer_kbd_serial_take_line();
+        if (dbg_line) cardputer_debug_line(dbg_line);
     }
 #endif
     jj_ini_cpu = micros();

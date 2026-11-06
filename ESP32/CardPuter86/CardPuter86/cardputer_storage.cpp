@@ -2070,7 +2070,7 @@ bool cardputer_storage_show_settings_menu(bool allow_usb_disk) {
                     // 256 KB 分页（默认）、512 KB 分页（DOS 看到 512K，但
                     // flash 换页量翻倍，POST 和读写都明显变慢）。
                     const char *ram_options[] = {
-                        "128 KB (fastest, no paging)",
+                        "128 KB (DOS 2.11; pages if SRAM short)",
                         "256 KB (DOS 5.0 default)",
                         "512 KB (slow, heavy paging)"
                     };
@@ -2082,9 +2082,20 @@ bool cardputer_storage_show_settings_menu(bool allow_usb_disk) {
                     if (pick != MENU_CANCEL) {
                         const uint32_t target_kb =
                             pick == 0 ? 128 : (pick == 2 ? 512 : 256);
-                        if (!guest_memory_set_ram_kb(target_kb)) {
+                        // 切档会把整块 guest RAM 换掉（guest_memory_set_ram_kb()
+                        // 内部重建页缓存并清零），所以必须立刻重放引导，否则
+                        // guest 会在被清空的 RAM 上继续执行 → 黑屏/崩。
+                        extern void cardputer_guest_restart(void);
+                        if (guest_memory_set_ram_kb(target_kb)) {
+                            char ram_msg[32];
+                            snprintf(ram_msg, sizeof(ram_msg), "Guest RAM: %lu KB",
+                                     (unsigned long)guest_memory_ram_kb());
+                            show_probe_status(ram_msg, "Rebooting guest...");
+                            delay(600);
+                            cardputer_guest_restart();
+                        } else {
                             show_probe_status("Guest RAM change failed",
-                                              "Swap partition unavailable");
+                                              "Restart the device to apply");
                             delay(1500);
                         }
                     }

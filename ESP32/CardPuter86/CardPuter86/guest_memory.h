@@ -11,6 +11,9 @@ bool guest_memory_512k_enabled(void);
 // 客机内存三档：128 KB（不分页，常驻）/ 256 KB（分页，DOS 5.0 默认）/ 512 KB（分页，很慢）
 uint32_t guest_memory_ram_kb(void);
 bool guest_memory_set_ram_kb(uint32_t kb);
+// 用户选了 128 KB 但开机时凑不齐 32 页常驻 → 本次开机实际退成 256 KB 分页。
+// 给 boot 提示用，避免「设置了却没生效」被静默吞掉。
+bool guest_memory_ram_fell_back(void);
 uint32_t guest_memory_size(void);
 void guest_memory_clear(void);
 uint8_t guest_memory_read(uint32_t address);
