@@ -1136,7 +1136,7 @@ static bool select_boot_image(bool force_menu) {
         }
     }
     // 用户明确选过的系统（设置菜单 "Boot system"）优先于「上次启动的镜像」：
-    // 这样选完 DOS 3.x 之后不管重启多少次、断电多少次，都还是 DOS 3.x。
+    // 这样选完 DOS 2.11 之后不管重启多少次、断电多少次，都还是 DOS 2.11。
     CardputerStorageType pref_storage = CARDPUTER_STORAGE_NONE;
     char pref_path[CARDPUTER_IMAGE_PATH_LEN] = {};
     if (nvs_read_boot_pref(&pref_storage, pref_path, sizeof(pref_path))) {
@@ -2203,7 +2203,7 @@ bool cardputer_storage_show_settings_menu(bool allow_usb_disk) {
                 }
                 if (more_choice == 6) {
                     // 多系统：flash 上每张可引导 IMG 一项（cardputer86.img =
-                    // 1.44MB MS-DOS 5.0，dos3.img = 360KB IBM PC-DOS 3.x）。
+                    // 1.44MB MS-DOS 5.0，dos211.img = 360KB COMPAQ MS-DOS 2.11）。
                     // 选中后写进 NVS 偏好并**立刻换盘重启 guest**，不用断电；
                     // 下次开机也是这张（偏好优先级高于「上次启动的镜像」）。
                     const uint8_t total = cardputer_storage_boot_image_count();

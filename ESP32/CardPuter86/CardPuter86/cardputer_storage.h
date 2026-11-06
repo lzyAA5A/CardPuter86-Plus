@@ -47,7 +47,7 @@ bool cardputer_storage_second_drive_present(void);
 
 /* ---- 多系统镜像：选择下次启动哪个系统 --------------------------------
    flash 上可以放多张可引导 IMG（内置的 1.44MB MS-DOS 5.0 = cardputer86.img，
-   外加 360KB 的 IBM PC-DOS 3.x = dos3.img）。设置菜单（Fn+空格 → More
+   外加 360KB 的 COMPAQ MS-DOS 2.11 = dos211.img）。设置菜单（Fn+空格 → More
    settings → Boot system）写入 NVS 里的偏好，它的优先级高于「上次启动的镜像」，
    所以选完之后断电/重启都还是同一个系统，直到用户再改。 */
 uint8_t cardputer_storage_boot_image_count(void);

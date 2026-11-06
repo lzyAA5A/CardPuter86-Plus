@@ -21,7 +21,7 @@ turns a whole microSD card into a DOS hard disk, and can flip itself into a Blue
 ## The three additions that matter
 
 **1. A 1.44 MB MS-DOS 5.0 disk really boots.**
-Upstream ships a 360 KB PC-DOS 3.x image. 360 KB leaves under 100 KB free - not enough for
+Upstream ships a 360 KB COMPAQ MS-DOS 2.11 image. 360 KB leaves under 100 KB free - not enough for
 any tool set; 1.44 MB is. This fork makes guest RAM pageable in three sizes (128 / 256 / 512 KB);
 256 KB clears MS-DOS 5.0's minimum, so a 1.44 MB system disk comes up and lands on `A:\>`.
 
@@ -66,7 +66,7 @@ On Windows the flow is the same, only the port changes (`--port COM4`).
 First boot reaches `A:\>` in roughly 30 seconds.
 
 If you do not want to hunt for a DOS disk first: the bundled
-`data/cardputer86.img` is the **360 KB PC-DOS 3.x image published by upstream**, untouched.
+`data/cardputer86.img` is the **360 KB COMPAQ MS-DOS 2.11 image published by upstream**, untouched.
 It builds and boots as-is, but there is very little room on it.
 
 ---
@@ -167,12 +167,13 @@ In `tools/cp86img/apps/`, sources in `apps/src/`, all rebuildable with Digital M
 
 ## Why there is no DOS in here
 
-MS-DOS is Microsoft's copyrighted work and PC-DOS is IBM's. Redistributing them from a public
+MS-DOS is Microsoft's copyrighted work (COMPAQ MS-DOS 2.11 is Microsoft's OEM release for COMPAQ).
+Redistributing it from a public
 repository is unauthorised distribution: it invites a DMCA takedown and can put the account at
 risk. Therefore:
 
 - This repository **adds no DOS system files**. `data/cardputer86.img` is exactly the
-  360 KB PC-DOS 3.x image upstream publishes, unmodified.
+  360 KB COMPAQ MS-DOS 2.11 image upstream publishes, unmodified.
 - For a 1.44 MB MS-DOS 5.0 / 6.22 disk, use an image you legitimately own (a physical floppy,
   your own backup, or the open-source FreeDOS) and run `cp86img.py build`. The tool only adds
   and removes files; it never touches the DOS boot sector or the system files.

@@ -34,7 +34,7 @@ this derivative also be distributed under the GPL, which it is.
 
 | Item | Where | Note |
 | --- | --- | --- |
-| `data/cardputer86.img` | 360 KB PC-DOS 3.x floppy image | **Exactly the file upstream publishes**, byte for byte. This fork does not add any DOS system file of its own. |
+| `data/cardputer86.img` | 360 KB COMPAQ MS-DOS 2.11 floppy image | **Exactly the file upstream publishes**, byte for byte. This fork does not add any DOS system file of its own. |
 | `tools/ima2h/input/**` | `compaqdos211.img`, `digger.com`, font data | Carried over from upstream unchanged. |
 | `preview/*.png`, `preview/*.svg`, `preview/*.zip` | screenshots, cover art, PLL configs | Carried over from upstream. |
 | `docs/README-upstream*.md` | upstream READMEs (en / zh-CN / es) | Kept verbatim for attribution. |
@@ -45,7 +45,7 @@ use; only the compiled output is redistributed here.
 
 ## Nothing here is a Microsoft or IBM distribution
 
-No MS-DOS, PC-DOS, or IBM/Microsoft system file was added by this fork. If you want to run
+No MS-DOS or other Microsoft system file was added by this fork. If you want to run
 MS-DOS 5.0 or 6.22 on this emulator, supply your own legally obtained image - see
 [docs/IMAGE.md](docs/IMAGE.md).
 
@@ -65,7 +65,7 @@ Open an issue with the file path and the claim, and it will be corrected or remo
   （相对上游 `v0.5.0`：25 文件、+3147/−318 行）、新文件 `cardputer_btkbd.cpp/.h`、
   `tools/cp86img/cp86img.py`、`tools/cp86img/apps/` 下的十个 DOS 程序及其源码、
   以及本仓库撰写的中英文文档。
-- 第三方内容：`data/cardputer86.img` 是**上游原样发布的那张 360KB PC-DOS 3.x 镜像**，
+- 第三方内容：`data/cardputer86.img` 是**上游原样发布的那张 360KB COMPAQ MS-DOS 2.11 镜像**，
   本仓库没有新增任何 DOS 系统文件；`tools/ima2h/input/**`、`preview/**`、
   `docs/README-upstream*.md` 均沿用上游原文。
 - 若你认为某处归属有误，请开 issue 指出文件路径，会据实修正或删除。

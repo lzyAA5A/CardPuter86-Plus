@@ -67,7 +67,7 @@ esptool.py --chip esp32s3 --port COM4 --baud 921600 write-flash \
 
 `data/` 下所有 `*.img` 都会被打进 fatfs。开机的设置菜单（`Fn` + 空格 → Settings →
 More settings → **Boot system**）可以选择下次启动哪一张，选择记在 NVS 里。适合
-"360K PC-DOS 3.x + 1.44M MS-DOS 5.0" 这种双系统。
+"360K COMPAQ MS-DOS 2.11 + 1.44M MS-DOS 5.0" 这种双系统。
 
 > SD 卡上的镜像**现在不能当启动盘**：卡已经被整卡注册成 C: 硬盘（见 README）。
 > 想要多系统请把镜像放内部 flash。
@@ -176,7 +176,7 @@ Usage: TE FILE.TXT
 360K 镜像只有 ~181KB 空闲，装不下全部 10 个程序（合计 234KB）。用 `--add` 挑着装：
 
 ```sh
-python3 tools/cp86img/cp86img.py build --base pc-dos3.img --out card.img \
+python3 tools/cp86img/cp86img.py build --base dos211.img --out card.img \
     --no-apps \
     --add "MINIGAME.EXE=tools/cp86img/apps/MINIGAME.EXE" \
     --add "WTERM.EXE=tools/cp86img/apps/WTERM.EXE" \
@@ -297,7 +297,7 @@ esptool.py --chip esp32s3 --port COM4 --baud 921600 write-flash \
 
 Every `*.img` under `data/` is baked into fatfs. The settings menu (`Fn` + Space -> Settings ->
 More settings -> **Boot system**) selects which one boots next, remembered in NVS.
-Multi-boot is what makes "360K PC-DOS 3.x + 1.44M MS-DOS 5.0" practical.
+Multi-boot is what makes "360K COMPAQ MS-DOS 2.11 + 1.44M MS-DOS 5.0" practical.
 
 > An image placed on the **SD card is not usable as a boot disk** any more: the card is
 > registered whole as hard drive C: (see the README). Keep boot images on internal flash.
@@ -376,7 +376,7 @@ Usage: TE FILE.TXT
 A 360K image has about 181 KB free - not enough for all ten programs (234 KB). Pick a subset:
 
 ```sh
-python3 tools/cp86img/cp86img.py build --base pc-dos3.img --out card.img \
+python3 tools/cp86img/cp86img.py build --base dos211.img --out card.img \
     --no-apps \
     --add "MINIGAME.EXE=tools/cp86img/apps/MINIGAME.EXE" \
     --add "WTERM.EXE=tools/cp86img/apps/WTERM.EXE" \

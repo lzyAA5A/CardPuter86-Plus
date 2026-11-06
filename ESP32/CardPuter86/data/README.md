@@ -7,7 +7,7 @@
 
 ## `cardputer86.img`
 
-**这是上游 CardPuter86 随仓库发布的那张 360KB PC-DOS 3.x 镜像，原样未改。**
+**这是上游 CardPuter86 随仓库发布的那张 360KB COMPAQ MS-DOS 2.11 镜像，原样未改。**
 本仓库没有新增任何 DOS 系统文件（原因见 [../NOTICE.md](../NOTICE.md)）。
 
 它可以直接构建、直接开机，空间很小（约 181KB 空闲）。想换成 1.44MB 的
@@ -26,7 +26,7 @@ python3 ../tools/cp86img/cp86img.py build \
 More settings → **Boot system** 选下次启动哪一张。例如同时放：
 
 ```
-cardputer86.img   PC-DOS 3.x（360K，快、省空间）
+cardputer86.img   COMPAQ MS-DOS 2.11（360K，快、省空间）
 dos5.img          MS-DOS 5.0（1.44M，工具全）
 ```
 
@@ -46,7 +46,7 @@ which is written to the flash `disk` partition at `0x2A0000`; the FAT starts at 
 
 ## `cardputer86.img`
 
-**This is the 360 KB PC-DOS 3.x image published by upstream CardPuter86, unmodified.**
+**This is the 360 KB COMPAQ MS-DOS 2.11 image published by upstream CardPuter86, unmodified.**
 This fork adds no DOS system file of its own (see [../NOTICE.md](../NOTICE.md)).
 
 It builds and boots as-is, but has only about 181 KB free. To use a 1.44 MB MS-DOS 5.0 / 6.22
