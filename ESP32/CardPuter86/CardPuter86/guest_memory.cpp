@@ -297,18 +297,36 @@ static bool ensure_cache(void) {
     uint8_t want = (page_count < CACHE_PAGE_MAX) ? (uint8_t)page_count
                                                  : CACHE_PAGE_MAX;
     const size_t can = free_now > RESERVE ? (free_now - RESERVE) / PAGE_SIZE : 0;
+    uint8_t floor_pages = 4;
+    /* 实测事故（必须记住）：WiFi 先起（N24 的启动顺序是 盘 → WiFi → CreateRAM）时
+       射频已经把 49 KB 拿走，free 只剩 52 KB —— 再按 68 KB 预留去算，可用页数 = 0，
+       循环从 1 页起、1 < 4 页下限 → ensure_cache() 返回 false → 客机**根本没起来**
+       （`guestmem: FAIL pages=1 free=52292`）。更糟的是 setup 提前失败后 loop() 不再
+       跑，连串口调试台（0x01 + 字母）都一个字不回，只能重新刷机。
+       所以预留是「尽量留」而不是「硬性条件」：拿不到最低页数就把预留降到最小重算，
+       永远优先保证客机能启动（WiFi 关联失败最多只是没网，guest 起不来是整机报废）。 */
     if (can < want) want = (uint8_t)(can > 0 ? can : 1);
+    if (want < 6) {
+        const size_t RESERVE_MIN = 12 * 1024;
+        const size_t can_min = free_now > RESERVE_MIN
+                                   ? (free_now - RESERVE_MIN) / PAGE_SIZE : 0;
+        if (can_min > want) {
+            want = (uint8_t)(can_min > CACHE_PAGE_MAX ? CACHE_PAGE_MAX : can_min);
+        }
+        floor_pages = 1;        // 已经退到最小预留：能拿几页是几页
+    }
     // 一页一页往下试（不是一次退 4 页）：碎片堆能拿到多少页只有试过才知道，
-    // 按 4 页步进会从 12 直接掉到 4，白扔一半缓存。下限 4 页（16 KB）：
-    // 再少就没有意义了——每次淘汰要 ~59 ms 擦 flash，页太少会把 guest 拖成幻灯片，
-    // 宁可让调用方报「切换失败」也不要悄悄给一台爬不动的机器。
+    // 按 4 页步进会从 12 直接掉到 4，白扔一半缓存。正常下限 4 页（16 KB）：
+    // 再少就没有意义了——每次淘汰要 ~59 ms 擦 flash，页太少会把 guest 拖成幻灯片。
+    // 但如果上面已经把预留压到最小（floor_pages = 1），那就接受更少的页数：
+    // 「很慢」也远好过「起不来」。
     for (uint8_t pages = want; pages >= 1; pages--) {
         tried_pages = pages;
         if (cache_alloc(pages)) {
-            if (pages < 4) {
+            if (pages < floor_pages) {
                 cache_free();
                 cache_pages = 0;
-                break;                  // 少于 4 页：当作失败
+                break;                  // 少于下限：当作失败
             }
             cache_pages = pages;
             return true;

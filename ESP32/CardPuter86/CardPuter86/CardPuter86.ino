@@ -620,7 +620,30 @@ void setup() {
                       (unsigned long)ESP.getMaxAllocHeap());
         Serial.printf("guestmem: %s\n", guest_memory_diag_text());
 #endif
-        while (true) delay(1000);
+        // 不要死等：以前这里是 `while (true) delay(1000);`，一旦页缓存分配失败，
+        // loop() 就永远不跑 → 串口调试台（0x01 + 字母）、屏幕、菜单全都没反应，
+        // 只能重新刷机才救得回来（实测踩过一次：`guestmem: FAIL pages=1`）。
+        // 现在改成「空转但保持调试通道活着」，每秒重试一次分配：进了菜单把
+        // Guest RAM 调低、或者射频掉线腾出内存，都可能自己恢复。
+        while (true) {
+#ifdef use_lib_log_serial
+            cardputer_kbd_serial_inject();
+            {
+                const int dbg_cmd = cardputer_kbd_serial_take_command();
+                if (dbg_cmd) cardputer_debug_command(dbg_cmd);
+                const char *dbg_line = cardputer_kbd_serial_take_line();
+                if (dbg_line) cardputer_debug_line(dbg_line);
+            }
+#endif
+            // delay() 就是 vTaskDelay，会把 CPU 让给 IDLE，不需要看门狗服务的那个
+            // 周期 vTaskDelay（cardputer_service_scheduler 定义在 loop 之前，
+            // setup 这里看不到它）。
+            delay(100);
+            if (CreateRAM()) {
+                tft_log("Guest RAM recovered");
+                break;
+            }
+        }
     }
     cardputer_emulator_ready = true;
     mem_log("after CreateRAM");
