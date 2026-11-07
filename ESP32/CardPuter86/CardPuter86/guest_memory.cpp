@@ -1,5 +1,6 @@
 #include "guest_memory.h"
 #include "gbConfig.h"
+#include "cardputer_modem.h"      // wifi 是否启用要知道：给射频留连续块
 #include <esp_partition.h>
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -13,6 +14,14 @@ static const uint32_t PAGE_SIZE = 4096;
 static const uint32_t RAM_KB_LOW = 128;
 static const uint32_t RAM_KB_MID = 256;
 static const uint32_t RAM_KB_HIGH = 512;
+/* 低于这个常驻页数就别让 guest 看到 512 KB：512 KB = 128 个 guest 页，页缓存只有
+   二十来页时扫一遍要做上百次 flash 淘汰（实测每次 ~56 ms），设备会直接卡成幻灯片
+   （用户实测：「设备变得特别卡，而且启动默认变成 512kb」）；而且缓存吃太多会把最大
+   连续块压到 ~3.5 KB，连 WiFi 关联都会失败（实测 `NET up=0`）。
+   实测本机：开 WiFi 只有 6–8 页、关 WiFi 约 21 页，都到不了 24 —— 所以这个档位在本
+   固件上会被自动降回 256 KB 并写回 NVS（自愈），不会再把设备卡死。
+   24 页 = 96 KB 常驻，是 512 KB guest 还能接受的下限。 */
+static const uint8_t MIN_PAGES_FOR_HIGH = 24;
 static const uint16_t PAGE_COUNT_MAX = 512 * 1024 / 4096;   // 128 页
 static uint32_t ram_kb = RAM_KB_MID;
 static uint16_t page_count = RAM_KB_MID * 1024 / 4096;      // 64 页
@@ -276,13 +285,15 @@ static bool ensure_cache(void) {
         return false;
     }
     // 分页模式：淘汰有 swap 落点，常驻页可以远少于总页数。
-    // RESERVE 只是给「运行期还要临时分配的东西」留的余量（wear-levelling 写、
-    // WiFi 的 TCP 缓冲、HTTP 应答）。它以前是 68 KB，因为当时内部盘 FatFS 是在
-    // 页缓存**之后**才挂载的，必须留够 ~16 KB 连续块；现在 FatFS 提前到
-    // modem_init 之前挂好（见 NEXT-STEPS N24），大额余量已经没必要，68 KB 反而
-    // 把页缓存饿到只剩 4 页。实测 free 只剩 ~11 KB 时 WiFi 关联 + HTTP 200 +
-    // 内部盘读盘都仍然正常，所以取 16 KB。
-    const size_t RESERVE = 16 * 1024;
+    // RESERVE 是留给「运行期还要临时分配的东西」的余量，必须按 WiFi 分两档：
+    //   * WiFi 启用（COM1 开 + 存了 SSID）：**68 KB**。射频关联那一刻要一次性拿到
+    //     ~54 KB 连续块，而 WiFi.begin() 是异步的 —— 等它真要分配时，页缓存早就把
+    //     堆吃干净了。实测：留 16 KB 时缓存抢到 21 页，`max` 只剩 3,572 B，
+    //     关联直接失败（`NET up=0`）；留 68 KB 时缓存 6–8 页，关联顺利完成。
+    //   * WiFi 关：**16 KB** 就够（内部盘 FatFS 已经提前挂好，不缺连续块），
+    //     缓存能拿到 21 页，DOS 明显更快。
+    const size_t RESERVE = cardputer_modem_radio_wanted() ? (68 * 1024)
+                                                            : (16 * 1024);
     uint8_t want = (page_count < CACHE_PAGE_MAX) ? (uint8_t)page_count
                                                  : CACHE_PAGE_MAX;
     const size_t can = free_now > RESERVE ? (free_now - RESERVE) / PAGE_SIZE : 0;
@@ -346,6 +357,17 @@ bool guest_memory_init(void) {
         page_count = (uint16_t)(ram_kb * 1024 / PAGE_SIZE);
         mode_512k = false;
         // 换回 128 KB 就得重新凑满 32 页常驻，凑不齐宁可起不来也不带病运行
+        if (!ensure_cache()) return false;
+    }
+    // 512 KB 只有在常驻页够多时才有意义：64 个 guest 页挤在 6 页缓存里，扫一遍
+    // guest 内存要做几十次 flash 淘汰（每次 ~59 ms），整台机器会变成幻灯片
+    // （用户实测：设置里选了 512 KB 之后「特别卡、启动默认变成 512 KB」）。
+    // 所以常驻页太少就自动降回 256 KB，别让一个存进 NVS 的档位把设备卡死。
+    if (ram_kb >= RAM_KB_HIGH && cache_pages < MIN_PAGES_FOR_HIGH) {
+        ram_kb = RAM_KB_MID;
+        page_count = (uint16_t)(ram_kb * 1024 / PAGE_SIZE);
+        ram_fell_back = true;
+        save_ram_kb_setting(ram_kb);      // 顺手把 NVS 里的 512 改掉，自愈
         if (!ensure_cache()) return false;
     }
     guest_memory_clear();
@@ -459,6 +481,19 @@ bool guest_memory_set_ram_kb(uint32_t kb) {
             }
         } else {
             sync_hot_globals();     // gb_gm_data 变空 → 慢路径读回 0，不会乱踩内存
+            return false;
+        }
+    }
+    // 512 KB 但常驻页太少 → 立刻降回 256 KB 并把 256 存进 NVS。
+    // 否则用户下次冷启动会再次落进「64 页 guest 挤 6 页缓存」的幻灯片状态
+    // （实测：切到 512 KB 后设备特别卡，且这个档位被持久化了）。
+    if (ram_kb >= RAM_KB_HIGH && cache_pages < MIN_PAGES_FOR_HIGH) {
+        ram_kb = RAM_KB_MID;
+        page_count = (uint16_t)(ram_kb * 1024 / PAGE_SIZE);
+        ram_fell_back = true;
+        save_ram_kb_setting(ram_kb);
+        if (!ensure_cache()) {
+            sync_hot_globals();
             return false;
         }
     }

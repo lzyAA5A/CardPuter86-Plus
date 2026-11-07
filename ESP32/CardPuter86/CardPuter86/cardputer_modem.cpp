@@ -128,8 +128,8 @@ bool cardputer_modem_save_wifi(const char *ssid, const char *pass) {
 }
 
 static void start_wifi(void) {
-    if (!cardputer_settings_com1_enabled()) return;
-    if (wifi_ssid[0] == '\0') return;
+    // 与 guest_memory 的页缓存 RESERVE 用同一个判据（COM1 使能 + 存了 SSID）
+    if (!cardputer_modem_radio_wanted()) return;
     WiFi.mode(WIFI_STA);
     /* 省电（modem sleep）不是可选项，是共存条件：
        实测 WiFi 用主动模式时，射频 + lwIP 一共要 ~103 KB，且关联那一刻要一次性
@@ -626,6 +626,14 @@ void cardputer_modem_poll(void) {
 
 bool cardputer_modem_wifi_configured(void) {
     return wifi_ssid[0] != '\0';
+}
+
+/* 「射频到底会不会跑」—— COM1 使能 **且** 存了 SSID。
+   start_wifi() 用的是这个前提，guest_memory 也用它决定要不要给射频留 68 KB
+   连续块。两边必须是同一个判据：否则会出现「WiFi 被 COM1 关掉、页缓存却仍按
+   WiFi 预留」的最坏组合（实测：缓存只拿 8 页 + 射频根本没起，白亏 13 页）。 */
+bool cardputer_modem_radio_wanted(void) {
+    return cardputer_settings_com1_enabled() && wifi_ssid[0] != '\0';
 }
 
 bool cardputer_modem_wifi_connected(void) {

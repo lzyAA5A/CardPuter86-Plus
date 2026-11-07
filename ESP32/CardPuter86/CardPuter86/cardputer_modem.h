@@ -19,6 +19,7 @@ static inline void cardputer_modem_init(void) {}
 static inline void cardputer_modem_poll(void) {}
 static inline bool cardputer_modem_save_wifi(const char *, const char *) { return false; }
 static inline bool cardputer_modem_wifi_configured(void) { return false; }
+static inline bool cardputer_modem_radio_wanted(void) { return false; }
 static inline bool cardputer_modem_wifi_connected(void) { return false; }
 static inline const char *cardputer_modem_wifi_ssid(void) { return ""; }
 static inline void cardputer_modem_pause_wifi(void) {}
@@ -31,6 +32,7 @@ void cardputer_modem_init(void);
 void cardputer_modem_poll(void);
 bool cardputer_modem_save_wifi(const char *ssid, const char *pass);
 bool cardputer_modem_wifi_configured(void);
+bool cardputer_modem_radio_wanted(void);
 bool cardputer_modem_wifi_connected(void);
 const char *cardputer_modem_wifi_ssid(void);
 void cardputer_modem_pause_wifi(void);

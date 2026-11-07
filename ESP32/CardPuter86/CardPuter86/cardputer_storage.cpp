@@ -2072,7 +2072,7 @@ bool cardputer_storage_show_settings_menu(bool allow_usb_disk) {
                     const char *ram_options[] = {
                         "128 KB (DOS 2.11; pages if SRAM short)",
                         "256 KB (DOS 5.0 default)",
-                        "512 KB (slow, heavy paging)"
+                        "512 KB (very slow unless SRAM free)"
                     };
                     const uint32_t current_kb = guest_memory_ram_kb();
                     const uint8_t selected =
